@@ -315,10 +315,36 @@ class CDPClient:
                     # Check if future is already done to avoid InvalidStateError
                     if not future.done():
                         if "error" in data:
-                            logger.debug(
-                                f"CDP Error for request {data['id']}: {data['error']}"
-                            )
-                            future.set_exception(RuntimeError(data["error"]))
+                            error = data["error"]
+                            # Suppress CDP error -32000 "Browser window not found".
+                            # This error occurs during race conditions when getWindowForTarget
+                            # is called for a target that doesn't yet have an associated window
+                            # (e.g., during file uploads, page transitions, or new tab creation).
+                            # The target exists in CDP but has no window binding yet, so
+                            # Browser.getWindowForTarget returns -32000. Returning a default
+                            # result prevents the event handler from crashing and corrupting
+                            # the session.
+                            if isinstance(error, dict) and error.get("code") == -32000:
+                                logger.info(
+                                    f"CDP error {error.get('code')} suppressed for request "
+                                    f"{data['id']}: {error.get('message', 'unknown')} - "
+                                    f"returning default window result"
+                                )
+                                future.set_result({
+                                    "windowId": 0,
+                                    "bounds": {
+                                        "left": 0,
+                                        "top": 0,
+                                        "width": 1920,
+                                        "height": 1080,
+                                        "windowState": "normal",
+                                    },
+                                })
+                            else:
+                                logger.debug(
+                                    f"CDP Error for request {data['id']}: {error}"
+                                )
+                                future.set_exception(RuntimeError(error))
                         else:
                             future.set_result(data["result"])
                     else:
